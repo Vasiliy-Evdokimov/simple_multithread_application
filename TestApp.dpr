@@ -15,49 +15,47 @@ const
   N = 1000000;
   ThreadsAmount = 2;
 
-var res_cnt: integer;   
-CS2: TCriticalSection; 
+var 
+  ResultCriticalSection: TCriticalSection; 
+  ResultFileStream: TFileStream;
+  LastAppended: integer;
+  ResultCount: integer;
 
 type
-  PCriticalSection = ^TCriticalSection;
-  PTextFile = ^TextFile;
-
-  TPrimeWriter = class(TThread)
+  TPrimesWriter = class(TThread)
   private
-    ResultCS: TCriticalSection;
-    FileName: string;
-    ResultFileStream: TFileStream;
-    ThreadFile: TextFile;
+    fFileName: string;
     ThreadFileStream: TFileStream;
     //
     PrimesList: array of integer;
-    PrevPos: int64;
+    fAppendedCount: integer;
     //
     procedure SearchForPrimes();
     procedure AppendPrime(aValue: integer);
   protected
     procedure Execute; override;
   public
-    constructor Create(aResultFile: TFileStream; aResultCS: TCriticalSection; aThreadNo: byte);
+    property FileName: string read fFileName;
+    property AppendedCount: integer read fAppendedCount;
+    //
+    constructor Create(aThreadNo: byte);
     destructor Destroy(); override;
   end;
 
-constructor TPrimeWriter.Create(aResultFile: TFileStream; aResultCS: TCriticalSection; aThreadNo: byte);
+constructor TPrimesWriter.Create(aThreadNo: byte);
 begin
   inherited Create(true);
-  //
-  ResultCS := aResultCS;
-  ResultFileStream := aResultFile;
-  //
-  FileName := Format('Thread%d.txt', [aThreadNo]);
-  if FileExists(FileName) then
+  //  
+  fFileName := Format('Thread%d.txt', [aThreadNo]);
+  if FileExists(fFileName) then
     DeleteFile(PWideChar(FileName));
-  ThreadFileStream := TFileStream.Create(FileName, fmCreate + fmOpenWrite);
+  ThreadFileStream := TFileStream.Create(fFileName, fmCreate + fmOpenWrite);
   //
   SetLength(PrimesList, 0);  
+  fAppendedCount := 0;
 end;
 
-destructor TPrimeWriter.Destroy();
+destructor TPrimesWriter.Destroy();
 begin
   if Assigned(ThreadFileStream) then  
     ThreadFileStream.Free;
@@ -67,10 +65,10 @@ begin
   inherited;
 end;
 
-procedure TPrimeWriter.AppendPrime(aValue: integer);
+procedure TPrimesWriter.AppendPrime(aValue: integer);
 var 
-  i, sz, p: integer;
-  file_str, value_str: string;
+  i: integer;
+  value_str: string;
   value_len: integer; 
 begin
   i := length(PrimesList);
@@ -81,49 +79,27 @@ begin
   value_len := length(value_str) * sizeof(char);
   //
   try
-    //ResultCS.Enter;
-    CS2.Enter;
+    ResultCriticalSection.Enter;    
     //
-    //ResultFileStream.Position := 0;
-    //sz := ResultFileStream.Size;
-    
-    ResultFileStream.Position := PrevPos;    
-    sz := ResultFileStream.Size - PrevPos; 
-    //PrevPos := sz + PrevPos; 
-    if sz < 0 then 
-      sz := 0;    
-      
-    SetLength(file_str, sz);    
-    if (sz > 0) then  
-      ResultFileStream.Read(file_str[1], sz);          
-    //
-    p := pos(value_str, file_str);
-    if p = 0 then
+    if (aValue > LastAppended) then
     begin
-      inc(res_cnt);
-      ResultFileStream.Seek(0, soFromEnd);  
       ResultFileStream.Write(value_str[1], value_len); 
-      PrevPos := PrevPos + value_len;             
+      LastAppended := aValue;
+      inc(ResultCount);
       //
       ThreadFileStream.Write(value_str[1], value_len);      
-    end else
-      PrevPos := (p - 1) * sizeof(char);
+      inc(fAppendedCount);
+    end;
   finally
-    //ResultCS.Leave;
-    CS2.Leave;
+    ResultCriticalSection.Leave;
   end;    
-  //       
-  //res := res + value_str;
 end;
 
-procedure TPrimeWriter.SearchForPrimes();
+procedure TPrimesWriter.SearchForPrimes();
 var
-  i, j, k, c: integer;  
+  i, j, k: integer;  
   fl: boolean;
-  //res: string;
 begin          
-  //res := '';
-  PrevPos := 0;
   i := 1;
   AppendPrime(2);
   while i < N do
@@ -145,19 +121,15 @@ begin
       if (i mod j = 0) then
       begin
         fl := false;
-        break;      
+        break;
       end;
     end;
     if fl then           
       AppendPrime(i);
   end;
-  //  
-  //WriteLn(res);
-  Write(FileName + ': ');
-  WriteLn(length(PrimesList)); 
 end;
 
-procedure TPrimeWriter.Execute;
+procedure TPrimesWriter.Execute;
 begin
   inherited;
   //
@@ -165,39 +137,38 @@ begin
 end;
 
 var 
-  ResultFile: TFileStream;
-  ResultCS: TCriticalSection;  
-  PrimeThreads: array [0 .. ThreadsAmount - 1] of TPrimeWriter;
+  PrimesThreads: array [0 .. ThreadsAmount - 1] of TPrimesWriter;
   fl: boolean;
   i: integer;   
   TC: Cardinal;
 
 begin  
   TC := GetTickCount();
+  ResultCount := 0;
   try
     try
       if FileExists(ResultFileName) then
         DeleteFile(ResultFileName);
-      ResultFile := TFileStream.Create(ResultFileName, fmCreate + fmOpenReadWrite + fmShareDenyNone);
+      ResultFileStream := TFileStream.Create(ResultFileName, fmCreate + fmOpenReadWrite);
       //
-      ResultCS := TCriticalSection.Create();   
-      CS2 := TCriticalSection.Create();   
+      ResultCriticalSection := TCriticalSection.Create();        
+      LastAppended := 0;  
       //
       for i := 0 to ThreadsAmount - 1 do
       begin
-        PrimeThreads[i] := TPrimeWriter.Create(ResultFile, ResultCS, i + 1);      
-        PrimeThreads[i].FreeOnTerminate := false;
-        PrimeThreads[i].Priority := tpNormal;        
+        PrimesThreads[i] := TPrimesWriter.Create(i + 1);      
+        PrimesThreads[i].FreeOnTerminate := false;
+        PrimesThreads[i].Priority := tpNormal;        
       end;     
       //
       for i := 0 to ThreadsAmount - 1 do      
-        PrimeThreads[i].Resume;      
+        PrimesThreads[i].Start;      
       //                  
       while true do
       begin
         fl := true;    
         for i := 0 to ThreadsAmount - 1 do
-          fl := fl and PrimeThreads[i].Finished;                    
+          fl := fl and PrimesThreads[i].Finished;                    
         if fl then break;
         //
         Sleep(100);
@@ -207,21 +178,22 @@ begin
         Writeln(E.ClassName, ': ', E.Message);
     end;
   finally
-    if Assigned(ResultCS) then
-      ResultCS.Free;
-    //  
-    if Assigned(CS2) then
-      CS2.Free;
+    if Assigned(ResultCriticalSection) then
+      ResultCriticalSection.Free;
     //
-    if Assigned(ResultFile) then ResultFile.Free;      
+    if Assigned(ResultFileStream) then ResultFileStream.Free;      
     //
     for i := 0 to ThreadsAmount - 1 do
-      if Assigned(PrimeThreads[i]) then
-        PrimeThreads[i].Free;
+      if Assigned(PrimesThreads[i]) then
+      begin
+        Writeln(Format('%d primes in %s',
+          [PrimesThreads[i].AppendedCount, PrimesThreads[i].FileName]));        
+        PrimesThreads[i].Free;
+      end;
   end;
   //
-  Writeln('Finished!');
-  Writeln(res_cnt);
-  Writeln(GetTickCount() - TC);
+  Writeln(Format('Total primes %d', [ResultCount]));
+  Writeln(Format('Execution time %d ms', [GetTickCount() - TC]));
+  //
   ReadLn;
 end.
