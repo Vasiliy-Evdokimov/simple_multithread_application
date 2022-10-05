@@ -12,10 +12,11 @@ uses
 
 const 
   ResultFileName = 'Result.txt';
-  N = 100;
+  N = 1000000;
   ThreadsAmount = 2;
 
-var res_cnt: integer;    
+var res_cnt: integer;   
+CS2: TCriticalSection; 
 
 type
   PCriticalSection = ^TCriticalSection;
@@ -30,7 +31,7 @@ type
     ThreadFileStream: TFileStream;
     //
     PrimesList: array of integer;
-    PrevPos: Int64;
+    PrevPos: int64;
     //
     procedure SearchForPrimes();
     procedure AppendPrime(aValue: integer);
@@ -68,7 +69,7 @@ end;
 
 procedure TPrimeWriter.AppendPrime(aValue: integer);
 var 
-  i, sz: integer;
+  i, sz, p: integer;
   file_str, value_str: string;
   value_len: integer; 
 begin
@@ -80,18 +81,24 @@ begin
   value_len := length(value_str) * sizeof(char);
   //
   try
-    ResultCS.Enter;
+    //ResultCS.Enter;
+    CS2.Enter;
     //
+    //ResultFileStream.Position := 0;
+    //sz := ResultFileStream.Size;
+    
     ResultFileStream.Position := PrevPos;    
     sz := ResultFileStream.Size - PrevPos; 
-    PrevPos := sz + PrevPos; 
+    //PrevPos := sz + PrevPos; 
     if sz < 0 then 
       sz := 0;    
+      
     SetLength(file_str, sz);    
     if (sz > 0) then  
       ResultFileStream.Read(file_str[1], sz);          
     //
-    if pos(value_str, file_str) = 0 then
+    p := pos(value_str, file_str);
+    if p = 0 then
     begin
       inc(res_cnt);
       ResultFileStream.Seek(0, soFromEnd);  
@@ -99,9 +106,11 @@ begin
       PrevPos := PrevPos + value_len;             
       //
       ThreadFileStream.Write(value_str[1], value_len);      
-    end;      
+    end else
+      PrevPos := (p - 1) * sizeof(char);
   finally
-    ResultCS.Leave;
+    //ResultCS.Leave;
+    CS2.Leave;
   end;    
   //       
   //res := res + value_str;
@@ -171,7 +180,8 @@ begin
         DeleteFile(ResultFileName);
       ResultFile := TFileStream.Create(ResultFileName, fmCreate + fmOpenReadWrite + fmShareDenyNone);
       //
-      ResultCS := TCriticalSection.Create();      
+      ResultCS := TCriticalSection.Create();   
+      CS2 := TCriticalSection.Create();   
       //
       for i := 0 to ThreadsAmount - 1 do
       begin
@@ -199,6 +209,9 @@ begin
   finally
     if Assigned(ResultCS) then
       ResultCS.Free;
+    //  
+    if Assigned(CS2) then
+      CS2.Free;
     //
     if Assigned(ResultFile) then ResultFile.Free;      
     //
