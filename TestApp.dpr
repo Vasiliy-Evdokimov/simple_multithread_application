@@ -102,30 +102,26 @@ var
 begin          
   i := 1;
   AppendPrime(2);
-  while i < N do
-  begin        
+  while (i < N) and (not Terminated) do
+  begin
     i := i + 2;
     //
     if (i > 10) and (i mod 10 = 5) then
       continue;
-    fl := true;  
+    fl := true;
     for k := 0 to length(PrimesList) - 1 do
     begin
+      if Terminated then exit;
+      //
       j := PrimesList[k];
-      if (j * j - 1 > i) then
-      begin
-        AppendPrime(i);
-        fl := false;
-        break;
-      end;          
+      if (j * j - 1 > i) then break;
       if (i mod j = 0) then
       begin
         fl := false;
         break;
       end;
     end;
-    if fl then           
-      AppendPrime(i);
+    if fl then AppendPrime(i);
   end;
 end;
 
